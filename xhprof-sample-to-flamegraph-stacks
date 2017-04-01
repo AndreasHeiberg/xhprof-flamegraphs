@@ -1,13 +1,106 @@
 #!/usr/bin/env php
 <?php
 
+/**
+    Converts from xhprof sample format to a format that [FlameGraph]() understands.
+
+    Only tested with tideways xhprof fork.
+
+    [XHProf format](http://www.kam24.ru/xhprof/docs/):
+
+    Array
+    (
+        [foo==>bar] => Array
+            (
+                [ct] => 2         # 2 calls to bar() from foo()
+                [wt] => 27        # inclusive time in bar() when called from foo()
+            )
+
+        [foo==>strlen] => Array
+            (
+                [ct] => 2
+                [wt] => 2
+            )
+
+        [bar==>bar@1] => Array    # a recursive call to bar()
+            (
+                [ct] => 1
+                [wt] => 2
+            )
+
+        [main()==>foo] => Array
+            (
+                [ct] => 1
+                [wt] => 74
+            )
+
+        [main()==>xhprof_disable] => Array
+            (
+                [ct] => 1
+                [wt] => 0
+            )
+
+        [main()] => Array         # fake symbol representing root
+            (
+                [ct] => 1
+                [wt] => 83
+            )
+
+    )
+
+    Needs to be converted to something like what's in example-stacks.txt:
+    main();
+      Drupal\Core\DrupalKernel::handlePageCache;
+      Drupal\Core\DependencyInjection\Container::get;
+      Symfony\Component\DependencyInjection\Container::get;
+      service_container_prod::getConfig_FactoryService;Drupal\Core\DependencyInjection\Container::get@1;
+      Symfony\Component\DependencyInjection\Container::get@1;
+      service_container_prod::getEventDispatcherService;
+      Symfony\Component\EventDispatcher\ContainerAwareEventDispatcher::addSubscriberService 11
+
+    ...
+
+    main();
+      Drupal\Core\DrupalKernel::handle;
+      Symfony\Component\HttpKernel\HttpKernel::handle;
+      Symfony\Component\HttpKernel\HttpKernel::handleRaw;
+      Symfony\Component\EventDispatcher\ContainerAwareEventDispatcher::dispatch;
+      Symfony\Component\EventDispatcher\EventDispatcher::dispatch;
+      Symfony\Component\EventDispatcher\EventDispatcher::doDispatch;
+      call_user_func;
+      Drupal\Core\EventSubscriber\AccessSubscriber::onKernelRequestAccessCheck;
+      Drupal\Core\Access\AccessManager::check;
+      Drupal\Core\Access\AccessManager::checkAny;
+      Drupal\Core\Access\AccessManager::performCheck;
+      call_user_func_array;
+      Drupal\user\Access\PermissionAccessCheck::access;
+      Drupal\Core\Session\AccountProxy::hasPermission;
+      Drupal\Core\Session\UserSession::hasPermission;
+      Drupal\Core\Session\UserSession::getRoleStorage;
+      Drupal\Core\Entity\EntityManager::getStorage;
+      Drupal\Core\Entity\EntityManager::getController;
+      Drupal\Core\Entity\EntityManager::getDefinition;
+      class_exists;
+      spl_autoload_call;
+      Symfony\Component\ClassLoader\ApcClassLoader::loadClass;
+      run_init::Entity/Role.php;
+      spl_autoload_call@1;
+      Symfony\Component\ClassLoader\ApcClassLoader::loadClass@1;
+      load::src/RoleInterface.php 1
+
+    The numbers being wt
+ **/
+
 function xhprof_get_args($argv) {
-  array_shift($argv);
-  return array_values(
-    array_filter($argv, function($arg) {
-      return strpos($arg, "-") !== 0;
-    })
-  );
+    // The first argument will be the name of this script; remove it.
+    array_shift($argv);
+
+    // The script doesn't support any options. Remove them if there are any.
+    return array_values(
+        array_filter($argv, function($arg) {
+            return strpos($arg, '-') !== 0;
+        })
+    );
 }
 
 $args = xhprof_get_args($argv);
@@ -15,31 +108,40 @@ $file = $args[0];
 if (is_dir($file)) {
   $dir = $file;
   $files = glob("{$dir}/*.sample_xhprof") + glob("{$dir}/*.sample_xhprof.gz");
-}
-else {
-  $files = array($file);
+} else {
+  $files = [$file];
 }
 
-$stacks = array();
+$stacks = [];
 
 foreach ($files as $file) {
-  if (!file_exists($file)) throw new RuntimeException("$file doesn't exist!");
+    if (! file_exists($file)) {
+        throw new RuntimeException("$file doesn't exist!");
+    }
 
-  $file = strpos($file, 'gz') === (strlen($file) - 2) ? "compress.zlib://$file" : $file;
+    $file = strpos($file, 'gz') === (strlen($file) - 2) ? "compress.zlib://$file" : $file;
 
-  $raw_xhprof = @unserialize(file_get_contents($file));
+    $raw_xhprof = @unserialize(file_get_contents($file));
 
-  if ($raw_xhprof === FALSE || empty($raw_xhprof)) {
-    continue;
-  }
+    if ($raw_xhprof === FALSE || empty($raw_xhprof)) {
+        continue;
+    }
 
-  foreach ($raw_xhprof as $stack) {
-    $stack_key = implode(";", explode("==>", $stack));
-    if (!isset($stacks[$stack_key])) $stacks[$stack_key] = 0;
-    $stacks[$stack_key]++;
-  }
+    foreach ($raw_xhprof as $key => $stack) {
+        $stackKey = implode(';', explode('==>', $key));
+        
+        if (! isset($stacks[$stackKey])) {
+            $stacks[$stackKey] = $stack;
+        } else {
+            // keys are unique at least in the samples I've seen so this doesn't seem particular important
+            $stacks[$stackKey]['ct'] += $stack['ct'];
+            $stacks[$stackKey]['wt'] += $stack['wt'];
+        }
+    }
 }
 
-foreach ($stacks as $stack => $count) {
-  print "$stack $count" . PHP_EOL;
+foreach ($stacks as $key => $values) {
+    $wt = $values['wt'];
+    print "$key $wt" . PHP_EOL;
 }
+

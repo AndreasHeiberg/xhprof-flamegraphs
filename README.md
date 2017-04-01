@@ -13,27 +13,18 @@ First, generate the sampling data, writing the files with a `sample_xhprof` (res
 One way to generate the sample data is prepend the following fragment to the entry point of the application, often `index.php`:
 
 ```php
-if (extension_loaded('uprofiler')) {
-  $profiler = 'uprofiler';
-}
-elseif (extension_loaded('xhprof')) {
-  $profiler = 'xhprof';
-}
-else {
-  $profiler = NULL;
-}
-if ($profiler) {
-  $enable = "{$profiler}_sample_enable";
-  $disable = "{$profiler}_sample_disable";
-  $uri = substr($_SERVER['REQUEST_URI'], 1);
-  $uri = preg_replace('/[?\/]/', '-', $uri);
-  $enable();
-  register_shutdown_function(function () use($disable, $profiler, $uri) {
-    $filename = "/tmp/xhprof/{$uri}." . uniqid() . ".{$profiler}";
-    file_put_contents($filename, serialize($disable()));
-    chmod($filename, 0777);
-  });
-}
+<?php
+
+tideways_enable(TIDEWAYS_FLAGS_NO_SPANS);
+
+// your application code;
+
+$data = tideways_disable();
+file_put_contents(
+    sys_get_temp_dir() . '/' . uniqid() . '.yourapp.xhprof',
+    serialize($data)
+);
+
 ```
 
 ## Building the flamegraph from the data
