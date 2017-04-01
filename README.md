@@ -30,6 +30,6 @@ file_put_contents(
 ## Building the flamegraph from the data
 
 ```
-./xhprof-sample-to-flamegraph-stacks /directory/with/sample/xhprof/files | flamegraph.pl > xhprof-flamegraph.svg
+./xhprof2flamegraph /directory/with/sample/xhprof/files | flamegraph.pl > xhprof-flamegraph.svg
 ```
 
